@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -6,6 +7,7 @@ use openraft::Config;
 use openraft::impls::Entry;
 use openraft::impls::EntryPayload;
 use openraft::impls::Vote;
+use openraft::metrics::WaitError;
 use openraft::raft::AppendEntriesRequest;
 use openraft::raft::AppendEntriesResponse;
 use openraft::testing::blank_ent;
@@ -14,9 +16,16 @@ use openraft_memstore::IntoMemClientRequest;
 use openraft_memstore::TypeConfig;
 
 use crate::fixtures::RaftRouter;
-use crate::fixtures::expect_timeout;
 use crate::fixtures::log_id;
 use crate::fixtures::ut_harness;
+
+fn expect_timeout<T>(result: Result<T, WaitError>) -> Result<()> {
+    match result {
+        Err(WaitError::Timeout(_, _)) => Ok(()),
+        Err(error) => Err(error.into()),
+        Ok(_) => anyhow::bail!("expected a timeout, but the condition was met"),
+    }
+}
 
 /// Replay issue #2245's stale request against a follower without running the sender's race.
 /// The overwritten entry must stay unapplied until logs from the newer leader replace it.
@@ -24,14 +33,17 @@ use crate::fixtures::ut_harness;
 #[test_harness::test(harness = ut_harness)]
 async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Result<()> {
     const FOLLOWER: u64 = 4;
-    let config = Config {
-        enable_tick: false,
-        enable_heartbeat: false,
-        enable_elect: false,
-        ..Default::default()
-    };
-    let mut router = RaftRouter::new(config)?;
-    router.new_raft_node(FOLLOWER).await?;
+    let config = Arc::new(
+        Config {
+            enable_tick: false,
+            enable_heartbeat: false,
+            enable_elect: false,
+            ..Default::default()
+        }
+        .validate()?,
+    );
+    let mut router = RaftRouter::new(config);
+    router.new_raft_node(FOLLOWER).await;
     let follower = router.get_raft_handle(&FOLLOWER)?;
     let (_, sm) = router.get_storage_handle(&FOLLOWER)?;
     let prefix_end = log_id(1, 0, 8);
@@ -49,7 +61,7 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         };
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
-        router.wait(&FOLLOWER).applied_index(Some(prefix_end.index), "prefix applied").await?;
+        router.wait(&FOLLOWER, None).applied_index(Some(prefix_end.index), "prefix applied").await?;
     }
 
     tracing::info!(%stale_log_id, %later_commit, "--- replay the stale stream's old vote and entry with the later commit");
@@ -67,10 +79,10 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         };
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
-        router.wait(&FOLLOWER).log_index(Some(stale_log_id.index), "stale entry stored").await?;
+        router.wait(&FOLLOWER, None).log_index(Some(stale_log_id.index), "stale entry stored").await?;
 
         let applied = router
-            .wait_with_timeout(&FOLLOWER, Duration::from_millis(200))
+            .wait(&FOLLOWER, Some(Duration::from_millis(200)))
             .applied_index_at_least(Some(stale_log_id.index), "stale entry must stay unapplied")
             .await;
         let state = sm.get_state_machine().await;
@@ -99,7 +111,10 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         };
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
-        router.wait(&FOLLOWER).applied_index(Some(later_commit.index), "canonical log applied").await?;
+        router
+            .wait(&FOLLOWER, None)
+            .applied_index(Some(later_commit.index), "canonical log applied")
+            .await?;
         let state = sm.get_state_machine().await;
         assert_eq!(Some(later_commit), state.last_applied_log);
         let expected_clients = HashMap::from([("y".to_string(), "request-1".to_string())]);

@@ -190,7 +190,6 @@ fn stale_stream_does_not_mix_votes_and_later_commits() {
                 let (cancel_tx, cancel_rx) = UTConfig::<()>::watch_channel(());
                 let mut cancel_tx = Some(cancel_tx);
                 let (_backoff_reset_tx, backoff_reset_rx) = UTConfig::<()>::watch_channel(());
-                let (_probe_tx, quorum_loss_probe_rx) = UTConfig::<()>::watch_channel(None);
                 let (tx_notify, _rx_notify) = UTConfig::<()>::mpsc(1);
                 let (paused_tx, paused_rx) = mpsc::channel();
                 let (resume_tx, resume_rx) = mpsc::channel();
@@ -205,7 +204,6 @@ fn stale_stream_does_not_mix_votes_and_later_commits() {
                         tx_notify,
                         cancel_rx,
                         replicate_batch: SharedReplicateBatch::new(),
-                        quorum_loss_probe_rx,
                     },
                     event_watcher: EventWatcher {
                         replicate_rx,
@@ -252,7 +250,7 @@ fn stale_stream_does_not_mix_votes_and_later_commits() {
                         (cancel_tx, io_tx, committed_tx)
                     }
                 });
-                let channels = (_replicate_tx, _backoff_reset_tx, _probe_tx, _rx_notify);
+                let channels = (_replicate_tx, _backoff_reset_tx, _rx_notify);
                 (state, publisher, channels)
             };
 
