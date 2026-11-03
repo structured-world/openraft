@@ -61,7 +61,7 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         };
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
-        router.wait(&FOLLOWER, None).applied_index(Some(prefix_end.index), "prefix applied").await?;
+        router.wait(&FOLLOWER, timeout()).applied_index(Some(prefix_end.index), "prefix applied").await?;
     }
 
     tracing::info!(%stale_log_id, %later_commit, "--- replay the stale stream's old vote and entry with the later commit");
@@ -79,7 +79,7 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         };
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
-        router.wait(&FOLLOWER, None).log_index(Some(stale_log_id.index), "stale entry stored").await?;
+        router.wait(&FOLLOWER, timeout()).log_index(Some(stale_log_id.index), "stale entry stored").await?;
 
         let applied = router
             .wait(&FOLLOWER, Some(Duration::from_millis(200)))
@@ -112,7 +112,7 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
         let response = follower.append_entries(request).await?;
         assert_eq!(AppendEntriesResponse::Success, response);
         router
-            .wait(&FOLLOWER, None)
+            .wait(&FOLLOWER, timeout())
             .applied_index(Some(later_commit.index), "canonical log applied")
             .await?;
         let state = sm.get_state_machine().await;
@@ -122,4 +122,8 @@ async fn stale_vote_with_newer_commit_does_not_apply_overwritten_entry() -> Resu
     }
 
     Ok(())
+}
+
+fn timeout() -> Option<Duration> {
+    Some(Duration::from_millis(1_000))
 }
