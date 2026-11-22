@@ -286,3 +286,70 @@ fn test_inflight_logs_since_conflict() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_inflight_into_clear() -> anyhow::Result<()> {
+    let logs_since = {
+        tracing::info!(
+            "--- a log plan 1 dropped by clear 2 keeps the logs after its prev, index 5, until the replication task answers"
+        );
+        let probe = Inflight::<UTConfig>::probe(Some(log_id(5)), Some(log_id(10)), InflightId::new(1));
+        let logs_since = Inflight::<UTConfig>::logs_since(Some(log_id(5)), InflightId::new(1));
+        for plan in [probe, logs_since] {
+            let expected = Inflight::Clear {
+                prev: Some(log_id(5)),
+                inflight_id: InflightId::new(2),
+            };
+            assert_eq!(Some(expected), plan.into_clear(InflightId::new(2)));
+        }
+        logs_since
+    };
+
+    tracing::info!("--- clear 3 of no plan, a snapshot plan 1 or clear 2 holds back no logs");
+    {
+        let snapshot = Inflight::<UTConfig>::snapshot(InflightId::new(1));
+        let clear = logs_since.into_clear(InflightId::new(2)).unwrap();
+        for other in [Inflight::None, snapshot, clear] {
+            assert_eq!(None, other.into_clear(InflightId::new(3)));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_inflight_cleared() -> anyhow::Result<()> {
+    let clear = Inflight::<UTConfig>::Clear {
+        prev: Some(log_id(5)),
+        inflight_id: InflightId::new(2),
+    };
+
+    tracing::info!("--- only the answer to clear 2 ends it: an answer to clear 1, or a repeated one, is stale");
+    {
+        let mut f = clear;
+        assert!(!f.cleared(InflightId::new(1)), "an answer to an earlier clear is stale");
+        assert_eq!(clear, f);
+
+        assert!(f.cleared(InflightId::new(2)));
+        assert_eq!(Inflight::<UTConfig>::None, f);
+        assert!(!f.cleared(InflightId::new(2)), "a repeated answer is stale");
+    }
+
+    tracing::info!("--- a late ack or conflict of the dropped plan 1 does not end clear 2");
+    {
+        let mut f = clear;
+        assert!(!f.ack(Some(log_id(7)), InflightId::new(1)));
+        assert!(!f.conflict(7, InflightId::new(1)));
+        assert_eq!(clear, f);
+    }
+
+    tracing::info!("--- an answer naming 2 does not end a log plan 2, which is no clear");
+    {
+        let mut f = Inflight::<UTConfig>::logs_since(Some(log_id(5)), InflightId::new(2));
+        let original = f;
+        assert!(!f.cleared(InflightId::new(2)));
+        assert_eq!(original, f);
+    }
+
+    Ok(())
+}
