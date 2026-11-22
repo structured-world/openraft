@@ -62,8 +62,11 @@ async fn stale_stream_after_follower_revert_gives_way() -> Result<()> {
     let mut router = RaftRouter::new(config)?;
 
     tracing::info!("--- initialize a 3-node cluster");
-    let mut log_index = router.new_cluster([0, 1, 2], []).await?;
-    let n0 = router.get_raft_handle(&0)?;
+    let (mut log_index, n0) = {
+        let log_index = router.new_cluster([0, 1, 2], []).await?;
+        let n0 = router.get_raft_handle(&0)?;
+        (log_index, n0)
+    };
 
     let stream_gate = OperationGate::default();
     let appends_to_1 = Arc::new(AtomicU64::new(0));
