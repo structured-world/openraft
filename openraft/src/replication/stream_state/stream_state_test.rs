@@ -371,16 +371,17 @@ fn logs_since_ends_once_its_plan_is_cleared() {
         let clear = Replicate::new_clear(InflightId::new(2));
 
         tracing::info!("--- with its plan current, the stream sends entry 6 after prev 5");
-        let payload = Payload::LogsSince {
-            prev: Some(log_id(1, 1, 5)),
-        };
-        let (mut state, replicate_tx, _cancel_tx, _channels) =
-            new_stream(payload, Some(inflight_id), Some(inflight_id));
-        let reads = {
+        let (mut state, replicate_tx, _cancel_tx, _channels, reads) = {
+            let payload = Payload::LogsSince {
+                prev: Some(log_id(1, 1, 5)),
+            };
+            let (mut state, replicate_tx, cancel_tx, channels) =
+                new_stream(payload, Some(inflight_id), Some(inflight_id));
             let request = state.next_request().await.unwrap().unwrap();
             assert_eq!(Some(log_id(1, 1, 5)), request.prev_log_id);
             assert_eq!(vec![EntryOf::<UTConfig>::new_blank(log_id(1, 1, 6))], request.entries);
-            state.log_reader.reads.len()
+            let reads = state.log_reader.reads.len();
+            (state, replicate_tx, cancel_tx, channels, reads)
         };
 
         tracing::info!("--- RaftCore clears the plan while entries 7 to 20 are left: the stream ends");
